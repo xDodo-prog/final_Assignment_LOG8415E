@@ -20,13 +20,17 @@ sudo -u ubuntu python3 -m venv "${VENV_DIR}"
 "${VENV_DIR}/bin/pip" install --upgrade pip
 "${VENV_DIR}/bin/pip" install flask requests
 
-# Gatekeeper app: forwards requests to Proxy
+# Gatekeeper app: forwards requests to Proxy + blocks dangerous SQL
 cat > "${APP_DIR}/gatekeeper.py" <<PY
 from flask import Flask, request, jsonify
 import requests
 
 app = Flask(__name__)
 PROXY_URL = "${PROXY_URL}"
+
+def is_dangerous(sql: str) -> bool:
+    s = (sql or "").strip().lower()
+    return s.startswith(("drop", "truncate", "alter"))
 
 @app.route("/", methods=["GET"])
 def health():
@@ -35,8 +39,14 @@ def health():
 @app.route("/query", methods=["POST"])
 def query():
     payload = request.get_json(silent=True) or {}
-    if "query" not in payload:
+    sql = payload.get("query", "")
+
+    if not sql:
         return jsonify({"error": "Missing field: query"}), 400
+
+    # Security: block destructive commands
+    if is_dangerous(sql):
+        return jsonify({"error": "Dangerous SQL command not allowed"}), 403
 
     try:
         r = requests.post(f"{PROXY_URL}/query", json=payload, timeout=10)
