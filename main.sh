@@ -32,6 +32,7 @@ wait_for_http() {
 # Binaries & scripts
 # ===============================
 PYTHON_BIN="${PYTHON_BIN:-$(detect_python)}"
+PYTHON_BIN="C:/Users/oswal/anaconda3/python.exe"
 AWS_PY="${AWS_PY:-VPC_architecture.py}"
 
 [ -n "$PYTHON_BIN" ] || { echo "[ERROR] Python introuvable"; exit 1; }
@@ -105,9 +106,9 @@ log STEP "2/3 - deploy"
 $PYTHON_BIN "$AWS_PY" deploy
 
 
-echo "[INFO] Waiting 60 seconds before the benchmark..."
+echo "[INFO] Waiting 60 seconds before the deployment of the application"
 for i in {60..1}; do
-  printf "\r %02d seconds remaining..." "$i"
+  printf "\r %02d seconds remaining" "$i"
   sleep 1
 done
 echo -e "\n[INFO] Resuming script."

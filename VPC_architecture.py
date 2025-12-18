@@ -40,7 +40,7 @@ INSTANCE_TYPE_GATEKEEPER = "t2.large"
 INSTANCE_TYPE_PROXY = "t2.large"
 INSTANCE_TYPE_DB = "t2.micro"
 
-UBUNTU_AMI = _cfg.get("UBUNTU_AMI", "")  # mets ton AMI Ubuntu ici
+UBUNTU_AMI = _cfg.get("UBUNTU_AMI", "ami-0ecb62995f68bb549")  
 NUM_DB_WORKERS = 2
 
 session = boto3.Session(
@@ -129,7 +129,10 @@ def create_subnets(vpc):
     public_gatekeeper_subnet = vpc.create_subnet(
         CidrBlock="10.0.1.0/24",
         AvailabilityZone=AZ,
-        MapPublicIpOnLaunch=True,
+    )
+    ec2_client.modify_subnet_attribute(
+    SubnetId=public_gatekeeper_subnet.id,
+    MapPublicIpOnLaunch={"Value": True},
     )
     public_gatekeeper_subnet.create_tags(
         Tags=[{"Key": "Name", "Value": "NNEME-Public-Subnet"}]
@@ -212,7 +215,7 @@ def create_nat_and_private_rt(vpc, public_gatekeeper_subnet, private_proxy_subne
     return nat_gw_id, private_nat_rt
 
 def create_security_groups(vpc):
-    print("[STEP] Creating Security Groups...")
+    print("[STEP] Creating Security Groups")
 
     # Gatekeeper SG
     sg_gatekeeper = ec2.create_security_group(
@@ -224,12 +227,12 @@ def create_security_groups(vpc):
         Tags=[{"Key": "Name", "Value": "NNEME-SG_Gatekeeper"}]
     )
 
-    sg_gatekeeper.authorize_security_group_ingress(
+    sg_gatekeeper.authorize_ingress(
         IpPermissions=[
             {   # HTTP
                 "IpProtocol": "tcp",
-                "FromPort": 80,
-                "ToPort": 80,
+                "FromPort": 8080,
+                "ToPort": 8080,
                 "IpRanges": [{"CidrIp": "0.0.0.0/0"}],
             },
             {   # SSH (à restreindre à ton IP si tu veux)
@@ -249,7 +252,7 @@ def create_security_groups(vpc):
     )
     sg_proxy.create_tags(Tags=[{"Key": "Name", "Value": "NNEME-SG_Proxy"}])
 
-    sg_proxy.authorize_security_group_ingress(
+    sg_proxy.authorize_ingress(
         IpPermissions=[
             {   # From Gatekeeper to Proxy (Flask port 5000)
                 "IpProtocol": "tcp",
@@ -274,7 +277,7 @@ def create_security_groups(vpc):
     )
     sg_db.create_tags(Tags=[{"Key": "Name", "Value": "NNEME-SG_DB"}])
 
-    sg_db.authorize_security_group_ingress(
+    sg_db.authorize_ingress(
         IpPermissions=[
             {   # MySQL from Proxy + DB<->DB for replication
                 "IpProtocol": "tcp",
@@ -348,6 +351,7 @@ def launch_instances(
             "DeviceIndex": 0,
             "AssociatePublicIpAddress": False,
             "Groups": [sg_proxy.id],
+        "PrivateIpAddress": "10.0.2.15",
         }],
         UserData=proxy_user_data,
         TagSpecifications=[{
@@ -368,6 +372,7 @@ def launch_instances(
             "DeviceIndex": 0,
             "AssociatePublicIpAddress": False,
             "Groups": [sg_db.id],
+        "PrivateIpAddress": "10.0.3.10",
         }],
         UserData=db_manager_data,  # manager user-data doit gérer le rôle master
         TagSpecifications=[{
@@ -380,27 +385,41 @@ def launch_instances(
     )[0]
     
     print(f"Lauching {NUM_DB_WORKERS} DB Worker EC2 instances")
-    workers = ec2.create_instances(
-        ImageId =UBUNTU_AMI,
-        InstanceType=INSTANCE_TYPE_DB,
-        KeyName=KEY_NAME,
-        MinCount=NUM_DB_WORKERS,
-        MaxCount=NUM_DB_WORKERS,
-        NetworkInterfaces=[{
-            "SubnetId": private_db_subnet.id,
-            "DeviceIndex": 0,
-            "AssociatePublicIpAddress": False,
-            "Groups": [sg_db.id],
-        }],
-        UserData=db_worker_ud,
-        TagSpecifications=[{
-            "ResourceType": "instance",
-            "Tags": [
-                {"Key": "Name", "Value": "DB-Worker"},
-                {"Key": "Role", "Value": "worker"},
-            ]
-        }]
-    )
+
+    # Fixed private IPs (must be inside 10.0.3.0/24 and unused)
+    worker_ips = ["10.0.3.11", "10.0.3.12"]
+
+    if NUM_DB_WORKERS != len(worker_ips):
+        raise RuntimeError(
+            f"NUM_DB_WORKERS={NUM_DB_WORKERS} but worker_ips has {len(worker_ips)} entries. "
+            "Update worker_ips to match NUM_DB_WORKERS."
+        )
+
+    workers = []
+    for idx, ip in enumerate(worker_ips, start=1):
+        w = ec2.create_instances(
+            ImageId=UBUNTU_AMI,
+            InstanceType=INSTANCE_TYPE_DB,
+            KeyName=KEY_NAME,
+            MinCount=1,
+            MaxCount=1,
+            NetworkInterfaces=[{
+                "SubnetId": private_db_subnet.id,
+                "DeviceIndex": 0,
+                "AssociatePublicIpAddress": False,
+                "Groups": [sg_db.id],
+                "PrivateIpAddress": ip,
+            }],
+            UserData=db_worker_ud,
+            TagSpecifications=[{
+                "ResourceType": "instance",
+                "Tags": [
+                    {"Key": "Name", "Value": f"DB-Worker-{idx}"},
+                    {"Key": "Role", "Value": "worker"},
+                ]
+            }],
+        )[0]
+        workers.append(w)
 
     print("  Instances launched:")
     print("  Gatekeeper:", gatekeeper.id)

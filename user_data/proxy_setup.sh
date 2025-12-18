@@ -1,159 +1,149 @@
 #!/bin/bash
-set -e
+set -euo pipefail
 
-#-----------------------------------
-# Update & Python installation
-#-----------------------------------
+echo "[PROXY] Starting proxy user-data"
 
+# ---------
+# Variables (adapt to your setup if needed)
+# ---------
+PROXY_DIR="/opt/proxy"
+VENV_DIR="${PROXY_DIR}/venv"
+
+MANAGER_HOST="10.0.3.10"
+WORKER1_HOST="10.0.3.11"
+WORKER2_HOST="10.0.3.12"
+
+DB_NAME="sakila"
+DB_USER="admin"
+DB_PASS="Password123"
+
+PROXY_PORT="5000"
+
+# ---------
+# Packages
+# ---------
+export DEBIAN_FRONTEND=noninteractive
 apt-get update -y
-apt-get install -y python3 python3-pip
+apt-get install -y python3-venv python3-full
 
-pip3 install flask mysql-connector-python requests
+# ---------
+# App directory
+# ---------
+mkdir -p "${PROXY_DIR}"
+chown -R ubuntu:ubuntu "${PROXY_DIR}"
 
-mkdir -p /opt/proxy
-cd /opt/proxy
+# ---------
+# Virtual environment (PEP 668 safe)
+# ---------
+sudo -u ubuntu python3 -m venv "${VENV_DIR}"
+"${VENV_DIR}/bin/pip" install --upgrade pip
+"${VENV_DIR}/bin/pip" install flask mysql-connector-python
 
-
-#-----------------------------------
-# Python Script
-#-----------------------------------
-
-cat << 'EOF' > /opt/proxy/proxy.py
-#!/usr/bin/env python3
+# ---------
+# Write proxy app
+# ---------
+cat > "${PROXY_DIR}/proxy.py" <<'PY'
 from flask import Flask, request, jsonify
 import mysql.connector
-from mysql.connector import Error
-import os
-import random
-import time
-WORKER_INDEX = 0
+from threading import Lock
 
 app = Flask(__name__)
 
-INTERNAL_SHARED_SECRET = os.getenv("INTERNAL_SHARED_SECRET", "db-shared-secret")
-STRATEGY = os.getenv("PROXY_STRATEGY", "ROUND_ROBIN")
-
+# =========================
+# DB config (fixed IPs)
+# =========================
 MANAGER_DB = {
-    "host": os.getenv("MANAGER_HOST", "10.0.3.10"),
-    "user": os.getenv("DB_USER", "admin"),
-    "password": os.getenv("DB_PASSWORD", "Password123"),
-    "database": os.getenv("DB_NAME", "sakila")
+    "host": "10.0.3.10",
+    "user": "admin",
+    "password": "Password123",
+    "database": "sakila",
 }
+
 WORKERS_DB = [
-    {
-        "host": os.getenv("WORKER1_HOST", "10.0.3.11"),
-        "user": os.getenv("DB_USER", "admin"),
-        "password": os.getenv("DB_PASSWORD", "Password123"),
-        "database": os.getenv("DB_NAME", "sakila")
-    },
-    {
-        "host": os.getenv("WORKER2_HOST", "10.0.3.12"),
-        "user": os.getenv("DB_USER", "admin"),
-        "password": os.getenv("DB_PASSWORD", "Password123"),
-        "database": os.getenv("DB_NAME", "sakila")
-    },
+    {"host": "10.0.3.11", "user": "admin", "password": "Password123", "database": "sakila"},
+    {"host": "10.0.3.12", "user": "admin", "password": "Password123", "database": "sakila"},
 ]
 
-def normalize_query(q: str) -> str:
-    return (q or "").strip()
+_worker_index = 0
+_rr_lock = Lock()
 
-def is_write_query(query: str) -> bool:
-    q = normalize_query(query).upper()
-    if not q:
-        return False
-    first_word = q.split()[0]
-    return first_word in {"INSERT", "UPDATE", "DELETE", "REPLACE", "CREATE", "ALTER", "DROP"}
+def is_write_query(q: str) -> bool:
+    q = q.strip().lower()
+    return q.startswith(("insert", "update", "delete", "create", "drop", "alter", "truncate"))
 
-def execute_query(db_config: dict, query: str):
-    try:
-        conn = mysql.connector.connect(**db_config)
-        cursor = conn.cursor(dictionary=True)
-        cursor.execute(query)
-        if is_write_query(query):
-            conn.commit()
-            result = {"rows": [], "rowcount": cursor.rowcount}
-        else:
-            rows = cursor.fetchall()
-            result = {"rows": rows, "rowcount": cursor.rowcount}
-        cursor.close()
-        conn.close()
-        return result, None
-    except Error as e:
-        return None, str(e)
+def pick_worker_round_robin():
+    global _worker_index
+    with _rr_lock:
+        w = WORKERS_DB[_worker_index]
+        _worker_index = (_worker_index + 1) % len(WORKERS_DB)
+    return w
 
+def execute_query(db_cfg: dict, sql: str):
+    conn = mysql.connector.connect(**db_cfg)
+    cur = conn.cursor(dictionary=True)
+    cur.execute(sql)
 
+    if is_write_query(sql):
+        conn.commit()
+        out = {"affected_rows": cur.rowcount}
+    else:
+        out = cur.fetchall()
 
-def choose_worker_round_robin():
-    global WORKER_INDEX
-    worker = WORKERS_DB[WORKER_INDEX]
-    WORKER_INDEX = (WORKER_INDEX + 1) % len(WORKERS_DB)
-    return worker
-
-def select_db_for_query(query: str):
-    if is_write_query(query):
-        return MANAGER_DB
-
-    return choose_worker_round_robin()
-
-def is_internal_call(req) -> bool:
-    secret = req.headers.get("X-Internal-Secret")
-    return secret == INTERNAL_SHARED_SECRET
-
-@app.route("/query", methods=["POST"])
-def handle_query():
-    if not is_internal_call(request):
-        return jsonify({"error": "Forbidden"}), 403
-
-    data = request.get_json(silent=True) or {}
-    query = data.get("query")
-    if not query:
-        return jsonify({"error": "Missing 'query'"}), 400
-
-    db_cfg = select_db_for_query(query)
-    result, error = execute_query(db_cfg, query)
-    if error:
-        return jsonify({"error": error}), 500
-
-    return jsonify({
-        "strategy": STRATEGY,
-        "target_host": db_cfg["host"],
-        "rowcount": result["rowcount"],
-        "rows": result["rows"],
-    }), 200
+    cur.close()
+    conn.close()
+    return out
 
 @app.route("/", methods=["GET"])
 def health():
-    return jsonify({"status": "proxy-ok", "strategy": STRATEGY}), 200
+    return jsonify({"status": "proxy up"}), 200
+
+@app.route("/query", methods=["POST"])
+def query():
+    payload = request.get_json(silent=True) or {}
+    sql = payload.get("query")
+    if not sql:
+        return jsonify({"error": "Missing field: query"}), 400
+
+    try:
+        if is_write_query(sql):
+            target = MANAGER_DB["host"]
+            res = execute_query(MANAGER_DB, sql)
+        else:
+            w = pick_worker_round_robin()
+            target = w["host"]
+            res = execute_query(w, sql)
+
+        return jsonify({"target_host": target, "result": res}), 200
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
 
 if __name__ == "__main__":
     app.run(host="0.0.0.0", port=5000)
-EOF
+PY
 
-chmod +x /opt/proxy/proxy.py
+chown -R ubuntu:ubuntu "${PROXY_DIR}"
+chmod +x "${PROXY_DIR}/proxy.py"
 
-#-----------------------------------
-#Use systemd for Gatekeeper
-#-----------------------------------
-cat << 'EOF' > /etc/systemd/system/proxy.service
+# ---------
+# systemd service
+# ---------
+cat > /etc/systemd/system/proxy.service <<EOF
 [Unit]
-Description=Proxy Service
+Description=Proxy Flask Service
 After=network.target
 
 [Service]
-ExecStart=/usr/bin/python3 /opt/proxy/proxy.py
-WorkingDirectory=/opt/proxy
-Restart=always
 User=ubuntu
-StandardOutput=append:/var/log/proxy.log
-StandardError=append:/var/log/proxy.log
+WorkingDirectory=${PROXY_DIR}
+ExecStart=${VENV_DIR}/bin/python ${PROXY_DIR}/proxy.py
+Restart=always
 
 [Install]
 WantedBy=multi-user.target
 EOF
 
-#-----------------------------------
-#Activate & start the service
-#-----------------------------------
 systemctl daemon-reload
-systemctl enable proxy
-systemctl start proxy
+systemctl enable --now proxy.service
+
+echo "[PROXY] Proxy service installed and started."
+systemctl --no-pager status proxy.service || true

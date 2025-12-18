@@ -1,49 +1,65 @@
 #!/bin/bash
-set -e
+set -euo pipefail
+
+DB_NAME="sakila"
+ADMIN_USER="admin"
+ADMIN_PASS="Password123"
+
+REPL_USER="replicator"
+REPL_PASS="ReplicaPassword123"
 
 DEBIAN_FRONTEND=noninteractive apt-get update -y
 DEBIAN_FRONTEND=noninteractive apt-get install -y mysql-server wget unzip
 
-systemctl start mysql
 systemctl enable mysql
+systemctl start mysql
 
-# Config MySQL : accepter connexions privées + activer binary logging pour réplication
+# -----------------------------------
+# MySQL Master config: bind + binlog
+# -----------------------------------
+# NOTE: use a binlog *base name* (no .log extension) to avoid confusing filenames
 cat >> /etc/mysql/mysql.conf.d/mysqld.cnf <<EOF
 
 # Replication Configuration (Manager/Master)
 server-id=1
-log_bin=/var/log/mysql/mysql-bin.log
-binlog_do_db=sakila
+log_bin=/var/log/mysql/mysql-bin
+binlog_format=ROW
+binlog_do_db=${DB_NAME}
 bind-address=0.0.0.0
 EOF
 
 systemctl restart mysql
 
-# Ajouter utilisateur admin
+# -----------------------------------
+# Users
+# -----------------------------------
 mysql -uroot <<EOF
-CREATE USER 'admin'@'%' IDENTIFIED BY 'Password123';
-GRANT ALL PRIVILEGES ON *.* TO 'admin'@'%' WITH GRANT OPTION;
+CREATE USER IF NOT EXISTS '${ADMIN_USER}'@'%' IDENTIFIED BY '${ADMIN_PASS}';
+GRANT ALL PRIVILEGES ON *.* TO '${ADMIN_USER}'@'%' WITH GRANT OPTION;
+
+CREATE USER IF NOT EXISTS '${REPL_USER}'@'%' IDENTIFIED BY '${REPL_PASS}';
+GRANT REPLICATION SLAVE ON *.* TO '${REPL_USER}'@'%';
+
 FLUSH PRIVILEGES;
 EOF
 
-# Créer utilisateur de réplication
-mysql -uroot <<EOF
-CREATE USER 'replicator'@'%' IDENTIFIED BY 'ReplicaPassword123';
-GRANT REPLICATION SLAVE ON *.* TO 'replicator'@'%';
-FLUSH PRIVILEGES;
-EOF
-
-# Télécharger et installer la base Sakila
+# -----------------------------------
+# Install Sakila
+# -----------------------------------
 cd /tmp
-wget https://downloads.mysql.com/docs/sakila-db.zip
-unzip sakila-db.zip
+wget -q https://downloads.mysql.com/docs/sakila-db.zip
+unzip -o sakila-db.zip
 cd sakila-db
 
-# Importer Sakila
 mysql -uroot < sakila-schema.sql
 mysql -uroot < sakila-data.sql
 
 echo "[INFO] Sakila database installed successfully on Manager (Master)"
 
-# Vérifier l'état du master pour la réplication
+# Optional: log current master status (debug)
 mysql -uroot -e "SHOW MASTER STATUS\G" > /var/log/master-status.log
+echo "[INFO] Master status written to /var/log/master-status.log"
+# -----------------------------------
+# Done
+# -----------------------------------
+echo "[INFO] MySQL Master setup complete."
