@@ -400,6 +400,10 @@ def launch_instances(
         }],
     )[0]
     
+    # Wait instance is fully up
+    manager.wait_until_running()
+    ec2_client.get_waiter("instance_status_ok").wait(InstanceIds=[manager.id])
+
     print("[INFO] Waiting before launching workers (simple sleep)...")
     wait_for_master_simple(host="10.0.3.10", sleep_s=300)
     
