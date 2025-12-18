@@ -6,6 +6,8 @@ import pathlib
 import argparse
 import os
 from typing import List
+import time
+import socket
 
 # -----------------------------
 # PARAMÈTRES & ENV
@@ -106,7 +108,21 @@ def load_ids() -> dict:
 
     return {k: cfg[k] for k in required_keys}
 
+def wait_for_master_simple(host="10.0.3.10", sleep_s=120) -> None:
+    
+    print("[WAIT] Waiting for MySQL port on master")
+    start = time.time()
+    while time.time() - start < 300:
+        try:
+            with socket.create_connection((host, 3306), timeout=3):
+                break
+        except OSError:
+            time.sleep(5)
 
+    # 2) temporisateur fixe
+    print(f"[WAIT] Sleeping {sleep_s}s to let sakila import finish")
+    time.sleep(sleep_s)
+    
 # ----------------------------------------
 # NETWORK CREATION
 # ----------------------------------------
@@ -383,6 +399,9 @@ def launch_instances(
                 ],
         }],
     )[0]
+    
+    print("[INFO] Waiting before launching workers (simple sleep)...")
+    wait_for_master_simple(host="10.0.3.10", sleep_s=300)
     
     print(f"Lauching {NUM_DB_WORKERS} DB Worker EC2 instances")
 
