@@ -34,6 +34,7 @@ wait_for_http() {
 PYTHON_BIN="${PYTHON_BIN:-$(detect_python)}"
 PYTHON_BIN="C:/Users/oswal/anaconda3/python.exe"
 AWS_PY="${AWS_PY:-VPC_architecture.py}"
+BENCH_PY="${BENCH_PY:-benchmark.py}"
 
 [ -n "$PYTHON_BIN" ] || { echo "[ERROR] Python introuvable"; exit 1; }
 for f in "$AWS_PY"; do
@@ -112,6 +113,19 @@ for i in {60..1}; do
   sleep 1
 done
 echo -e "\n[INFO] Resuming script."
+
+# ===============================
+# 3/3 Benchmark
+# ===============================
+echo "[INFO] Waiting 60 seconds before the benchmarking"
+for i in {60..1}; do
+  printf "\r %02d seconds remaining" "$i"
+  sleep 1
+done
+echo -e "\n[INFO] Benchmark started."
+
+log STEP "3/3 - benchmark"
+$PYTHON_BIN "$BENCH_PY"
 
 # ===============================
 # Option: resource destruction
