@@ -334,6 +334,7 @@ def launch_instances(
     proxy_user_data = load_file("user_data/proxy_setup.sh")
     db_manager_data = load_file("user_data/db_manager_setup.sh")
     db_worker_ud = load_file("user_data/db_worker_setup.sh")
+    bench_ud = load_file("user_data/sysbench_setup.sh")
 
     print("Launching Gatekeeper EC2")
     gatekeeper = ec2.create_instances(
@@ -404,7 +405,7 @@ def launch_instances(
     manager.wait_until_running()
     ec2_client.get_waiter("instance_status_ok").wait(InstanceIds=[manager.id])
 
-    print("[INFO] Waiting before launching workers (simple sleep)...")
+    print("[INFO] Waiting before launching workers (simple sleep)")
     wait_for_master_simple(host="10.0.3.10", sleep_s=300)
     
     print(f"Lauching {NUM_DB_WORKERS} DB Worker EC2 instances")
@@ -443,12 +444,35 @@ def launch_instances(
             }],
         )[0]
         workers.append(w)
+        
+    print("Launching Benchmark EC2 (private, in proxy subnet)")
+    benchmark = ec2.create_instances(
+        ImageId=UBUNTU_AMI,
+        InstanceType="t3.micro",
+        KeyName=KEY_NAME,
+        MinCount=1,
+        MaxCount=1,
+        NetworkInterfaces=[{
+            "SubnetId": private_proxy_subnet.id,   # <-- subnet du proxy
+            "DeviceIndex": 0,
+            "AssociatePublicIpAddress": False,
+            "Groups": [sg_proxy.id],               # ou sg_bench.id si tu en fais un
+            # Optionnel: IP fixe (sinon AWS choisit)
+            # "PrivateIpAddress": "10.0.2.20",
+        }],
+        UserData=bench_ud,
+        TagSpecifications=[{
+            "ResourceType": "instance",
+            "Tags": [{"Key": "Name", "Value": "Benchmark-EC2"}],
+        }],
+    )[0]
 
     print("  Instances launched:")
     print("  Gatekeeper:", gatekeeper.id)
     print("  Proxy     :", proxy.id)
     print("  DB Manager:", manager.id)
     print("  DB Workers:", [w.id for w in workers])
+    print("  Benchmark :", benchmark.id)
     
 
 
