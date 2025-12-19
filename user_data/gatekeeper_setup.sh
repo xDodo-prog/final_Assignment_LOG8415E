@@ -26,15 +26,23 @@ from flask import Flask, request, jsonify
 import requests
 
 app = Flask(__name__)
-PROXY_URL = "${PROXY_URL}"
+
+# Proxy private IP
+PROXY_URL = "http://10.0.2.15:5000"
+
+# Allowed strategies (for safety)
+ALLOWED_STRATEGIES = {"direct", "random", "latency", "round_robin"}
+
 
 def is_dangerous(sql: str) -> bool:
     s = (sql or "").strip().lower()
     return s.startswith(("drop", "truncate", "alter"))
 
+
 @app.route("/", methods=["GET"])
 def health():
     return jsonify({"status": "gatekeeper up", "proxy": PROXY_URL}), 200
+
 
 @app.route("/query", methods=["POST"])
 def query():
@@ -48,14 +56,29 @@ def query():
     if is_dangerous(sql):
         return jsonify({"error": "Dangerous SQL command not allowed"}), 403
 
+    # Optional strategy forwarded to proxy
+    strategy = (payload.get("strategy") or "").strip().lower()
+    headers = {}
+    if strategy:
+        if strategy not in ALLOWED_STRATEGIES:
+            return jsonify({"error": f"Invalid strategy: {strategy}. Allowed: {sorted(ALLOWED_STRATEGIES)}"}), 400
+        headers["X-Proxy-Strategy"] = strategy
+
+    # Forward to proxy
     try:
-        r = requests.post(f"{PROXY_URL}/query", json=payload, timeout=10)
+        r = requests.post(
+            f"{PROXY_URL}/query",
+            json=payload,          # includes {"query": "...", "strategy": "..."} but proxy only cares about query + header
+            headers=headers,
+            timeout=15,
+        )
         return (r.text, r.status_code, {"Content-Type": "application/json"})
     except requests.RequestException as e:
         return jsonify({"error": f"Proxy unreachable: {str(e)}"}), 502
 
+
 if __name__ == "__main__":
-    app.run(host="0.0.0.0", port=int("${PORT}"))
+    app.run(host="0.0.0.0", port=8080)
 PY
 
 chown -R ubuntu:ubuntu "${APP_DIR}"
