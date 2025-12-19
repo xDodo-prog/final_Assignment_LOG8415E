@@ -444,7 +444,10 @@ def launch_instances(
             }],
         )[0]
         workers.append(w)
-        
+    
+    print("[INFO] Waiting before launching sysbench_benchmark")
+    wait_for_master_simple(host="10.0.3.12", sleep_s=180)
+    
     print("Launching Benchmark EC2 (private, in proxy subnet)")
     benchmark = ec2.create_instances(
         ImageId=UBUNTU_AMI,
@@ -453,12 +456,10 @@ def launch_instances(
         MinCount=1,
         MaxCount=1,
         NetworkInterfaces=[{
-            "SubnetId": private_proxy_subnet.id,   # <-- subnet du proxy
+            "SubnetId": private_proxy_subnet.id,   
             "DeviceIndex": 0,
             "AssociatePublicIpAddress": False,
-            "Groups": [sg_proxy.id],               # ou sg_bench.id si tu en fais un
-            # Optionnel: IP fixe (sinon AWS choisit)
-            # "PrivateIpAddress": "10.0.2.20",
+            "Groups": [sg_proxy.id],               
         }],
         UserData=bench_ud,
         TagSpecifications=[{
