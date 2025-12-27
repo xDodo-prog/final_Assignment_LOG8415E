@@ -17,7 +17,7 @@ systemctl start mysql
 # -----------------------------------
 # MySQL Master config: bind + binlog
 # -----------------------------------
-# NOTE: use a binlog *base name* (no .log extension) to avoid confusing filenames
+
 cat >> /etc/mysql/mysql.conf.d/mysqld.cnf <<EOF
 
 # Replication Configuration (Manager/Master)
@@ -56,7 +56,9 @@ mysql -uroot < sakila-data.sql
 
 echo "[INFO] Sakila database installed successfully on Manager (Master)"
 
-# Optional: log current master status (debug)
+# -----------------------------------
+# Get Master Status
+# -----------------------------------
 mysql -uroot -e "SHOW MASTER STATUS\G" > /var/log/master-status.log
 echo "[INFO] Master status written to /var/log/master-status.log"
 # -----------------------------------

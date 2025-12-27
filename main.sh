@@ -32,7 +32,6 @@ wait_for_http() {
 # Binaries & scripts
 # ===============================
 PYTHON_BIN="${PYTHON_BIN:-$(detect_python)}"
-PYTHON_BIN="C:/Users/oswal/anaconda3/python.exe"
 AWS_PY="${AWS_PY:-VPC_architecture.py}"
 BENCH_PY="${BENCH_PY:-benchmark.py}"
 

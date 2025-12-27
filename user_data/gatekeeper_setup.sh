@@ -15,7 +15,7 @@ apt-get install -y python3-venv python3-full
 mkdir -p "${APP_DIR}"
 chown -R ubuntu:ubuntu "${APP_DIR}"
 
-# venv (PEP 668 safe)
+# venv 
 sudo -u ubuntu python3 -m venv "${VENV_DIR}"
 "${VENV_DIR}/bin/pip" install --upgrade pip
 "${VENV_DIR}/bin/pip" install flask requests

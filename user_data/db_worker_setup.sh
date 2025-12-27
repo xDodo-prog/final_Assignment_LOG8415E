@@ -18,7 +18,6 @@ systemctl start mysql
 
 # -----------------------------------
 # Unique server-id from private IP last octet
-# (your original approach is good)
 # -----------------------------------
 PRIVATE_IP=$(hostname -I | awk '{print $1}')
 SERVER_ID=$(echo "$PRIVATE_IP" | awk -F'.' '{print $4}')
@@ -40,7 +39,7 @@ EOF
 
 systemctl restart mysql
 
-# Admin user locally (kept from your original pattern)
+# Admin user locally 
 mysql -uroot <<EOF
 CREATE USER IF NOT EXISTS '${ADMIN_USER}'@'%' IDENTIFIED BY '${ADMIN_PASS}';
 GRANT ALL PRIVILEGES ON *.* TO '${ADMIN_USER}'@'%' WITH GRANT OPTION;
@@ -65,7 +64,6 @@ done
 
 # -----------------------------------
 # 1) Pull a consistent dump from master that includes correct binlog file/pos
-#    --master-data=2 writes the CHANGE MASTER line into the dump as a comment.
 # -----------------------------------
 echo "[STEP] Dumping ${DB_NAME} from master with --master-data=2..."
 mysqldump \

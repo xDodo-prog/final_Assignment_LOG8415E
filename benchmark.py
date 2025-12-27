@@ -79,7 +79,7 @@ def call_gatekeeper(sql: str, strategy: str | None = None) -> dict:
     return r.json()
 
 # -----------------------------
-# run read and write benchmarks (no CREATE)
+# run read and write benchmarks 
 # -----------------------------
 
 def run_writes(strategy: str):
